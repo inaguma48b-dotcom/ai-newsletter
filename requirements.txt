@@ -1,0 +1,2 @@
+# 標準ライブラリのみ使用のため追加インストール不要
+# GitHub Actionsでも pip install は不要

@@ -1,0 +1,39 @@
+name: Weekly AI Newsletter
+
+on:
+  schedule:
+    # 毎週月曜 07:00 JST (= 日曜 22:00 UTC)
+    - cron: "0 22 * * 0"
+  workflow_dispatch:   # 手動実行ボタン（テスト用）
+
+permissions:
+  contents: write
+
+jobs:
+  send-newsletter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ニュースレター生成 & 送信
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENTS: ${{ secrets.RECIPIENTS }}
+        run: python ai-newsletter/newsletter.py
+
+      - name: バックナンバーをコミット
+        run: |
+          git config user.name "newsletter-bot"
+          git config user.email "actions@github.com"
+          git add ai-newsletter/archive/
+          git diff --cached --quiet || git commit -m "archive: $(date +%Y-%m-%d) 号を追加"
+          git push
