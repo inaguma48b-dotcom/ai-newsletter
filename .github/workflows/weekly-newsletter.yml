@@ -28,7 +28,7 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENTS: ${{ secrets.RECIPIENTS }}
-        run: python ai-newsletter/newsletter.py
+        run: python newsletter.py
 
       - name: バックナンバーをコミット
         run: |
