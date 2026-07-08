@@ -2,9 +2,8 @@ name: Weekly AI Newsletter
 
 on:
   schedule:
-    # 毎週月曜 07:00 JST (= 日曜 22:00 UTC)
     - cron: "0 22 * * 0"
-  workflow_dispatch:   # 手動実行ボタン（テスト用）
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -22,9 +21,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: ニュースレター生成 & 送信
+      - name: ニュースレター送信
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENTS: ${{ secrets.RECIPIENTS }}
@@ -34,6 +32,6 @@ jobs:
         run: |
           git config user.name "newsletter-bot"
           git config user.email "actions@github.com"
-          git add ai-newsletter/archive/
+          git add archive/
           git diff --cached --quiet || git commit -m "archive: $(date +%Y-%m-%d) 号を追加"
           git push
