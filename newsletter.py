@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
-AI Weekly Newsletter Generator (無料版)
-========================================
-Google Gemini API (無料枠) で最新AI情報をリサーチし、
-HTML形式のメールマガジンを生成して Gmail SMTP で配信する。
-
-GitHub Actions から週1回自動実行される想定。
-ローカル実行も可能: python newsletter.py [--dry-run]
+AI Weekly Newsletter Generator (Groq無料版)
+============================================
+Groq API (無料枠) で最新AI情報を生成し、
+HTML形式のメールマガジンを Gmail SMTP で配信する。
 
 必要な環境変数:
-  GEMINI_API_KEY      : Google Gemini APIキー（無料）
+  GROQ_API_KEY        : Groq APIキー（無料）
   GMAIL_ADDRESS       : 送信元Gmailアドレス
   GMAIL_APP_PASSWORD  : Gmailアプリパスワード(16桁)
   RECIPIENTS          : 宛先(カンマ区切りで複数可)
@@ -19,7 +16,6 @@ import os
 import re
 import sys
 import json
-import time
 import smtplib
 import datetime
 import urllib.request
@@ -32,25 +28,26 @@ from pathlib import Path
 # ---------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------
-GEMINI_MODEL = "gemini-2.5-flash"
+GROQ_MODEL = "llama-3.3-70b-versatile"  # Groq無料枠で使える高性能モデル
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 NEWSLETTER_TITLE = "AI Weekly Insight"
 SUBTITLE = "ビジネスと副業に効く、今週のAI情報"
 
 # ---------------------------------------------------------------
-# 1. Gemini APIで記事生成（標準ライブラリのみ・依存ゼロ）
+# 1. Groq APIで記事生成
 # ---------------------------------------------------------------
-PROMPT_TEMPLATE = """あなたは日本のビジネスパーソン向けAI情報メールマガジンの編集長です。
-本日は{today}です。直近1週間({week_start}〜{today})のAI業界の動向をまとめ、
+SYSTEM_PROMPT = """あなたは日本のビジネスパーソン向けAI情報メールマガジンの編集長です。
 「明日から仕事や副業に使える」実用情報に絞ったメールマガジン本文を作成してください。
 
-# 執筆方針
+執筆方針:
 - 結論ファースト。各項目は「何が起きた→なぜ重要→どう使えるか」の順
 - 専門用語には一言補足を付ける
 - ビジネス・副業への活用視点を必ず入れる
 - 2026年最新のAIトレンドを反映する
+- Markdown以外の前置き・後書きは一切不要"""
 
-# 必ずこの構造のMarkdownで出力（前置き・後書き不要）
+USER_PROMPT = """本日は{today}です。直近1週間({week_start}〜{today})のAI業界動向をまとめ、
+以下の構造のMarkdownでメールマガジン本文を作成してください。
 
 ## 今週のハイライト
 （3行で今週の要点）
@@ -72,25 +69,28 @@ AIを使った副業のヒントや市場動向を1〜2つ（各3〜4文）
 2〜3文の軽いまとめ"""
 
 
-def call_gemini(prompt: str) -> str:
-    """Gemini APIをurllib（標準ライブラリ）で呼び出す。"""
-    api_key = os.environ["GEMINI_API_KEY"]
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={api_key}"
-    )
+def call_groq(prompt: str) -> str:
+    """Groq APIをurllib（標準ライブラリ）で呼び出す。"""
+    api_key = os.environ["GROQ_API_KEY"]
+    url = "https://api.groq.com/openai/v1/chat/completions"
+
     payload = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 4096,
-        },
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 4096,
+        "temperature": 0.7,
     }).encode("utf-8")
 
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
         method="POST",
     )
     try:
@@ -98,30 +98,29 @@ def call_gemini(prompt: str) -> str:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
-        raise RuntimeError(f"Gemini APIエラー {e.code}: {body}") from e
+        raise RuntimeError(f"Groq APIエラー {e.code}: {body}") from e
 
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Gemini APIレスポンス解析失敗: {data}") from e
+        raise RuntimeError(f"Groq APIレスポンス解析失敗: {data}") from e
 
 
 def generate_newsletter() -> str:
-    """Gemini APIで記事生成。Markdown本文を返す。"""
     today = datetime.date.today()
     week_start = today - datetime.timedelta(days=7)
 
-    print(f"[1/3] Gemini APIで記事生成中... (model={GEMINI_MODEL})")
+    print(f"[1/3] Groq APIで記事生成中... (model={GROQ_MODEL})")
 
-    prompt = PROMPT_TEMPLATE.format(
+    prompt = USER_PROMPT.format(
         today=today.strftime("%Y年%m月%d日"),
         week_start=week_start.strftime("%Y年%m月%d日"),
     )
 
-    body_md = call_gemini(prompt)
+    body_md = call_groq(prompt)
 
     if len(body_md) < 300:
-        raise RuntimeError("生成された本文が短すぎます。APIレスポンスを確認してください。")
+        raise RuntimeError("生成された本文が短すぎます。")
 
     print(f"  生成完了（{len(body_md)}文字）")
     return body_md.strip()
@@ -149,13 +148,11 @@ def md_to_html(md: str) -> str:
                 f'background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;'
                 f'border-radius:6px;">{line[3:]}</h2>')
         elif line.startswith("- "):
-            html_lines.append(
-                f'<p style="margin:4px 0 4px 16px;">・{line[2:]}</p>')
+            html_lines.append(f'<p style="margin:4px 0 4px 16px;">・{line[2:]}</p>')
         elif line == "":
             html_lines.append("")
         else:
-            html_lines.append(
-                f'<p style="margin:8px 0;line-height:1.8;">{line}</p>')
+            html_lines.append(f'<p style="margin:8px 0;line-height:1.8;">{line}</p>')
     return "\n".join(html_lines)
 
 
@@ -175,8 +172,7 @@ def build_html_email(body_md: str, issue_no: int, date_str: str) -> str:
       {body_html}
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px;">
       <p style="font-size:11px;color:#9ca3af;text-align:center;">
-        本メールはGemini AIによる自動生成です。<br>
-        重要な意思決定の際は出典元をご確認ください。
+        本メールはAIによる自動生成です。重要な意思決定の際は出典元をご確認ください。
       </p>
     </div>
   </div>
@@ -226,7 +222,7 @@ def main():
     print(f"  アーカイブ保存: archive/{stamp}_vol{issue_no}.html")
 
     if dry_run:
-        print("--dry-run のため送信はスキップしました。archive/ を確認してください。")
+        print("--dry-run のため送信はスキップしました。")
         return
 
     recipients = [a.strip() for a in os.environ["RECIPIENTS"].split(",") if a.strip()]
