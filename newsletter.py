@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 """
-AI Weekly Newsletter Generator (固定テンプレート版)
-====================================================
-AIなしで固定テンプレートのメールマガジンを Gmail SMTP で配信する。
-仕組みの動作確認用。中身は後でAIに差し替え可能。
-
-必要な環境変数:
-  GMAIL_ADDRESS       : 送信元Gmailアドレス
-  GMAIL_APP_PASSWORD  : Gmailアプリパスワード(16桁)
-  RECIPIENTS          : 宛先(カンマ区切りで複数可)
+AI Weekly Newsletter ? content.md読み込み版
+content.mdを編集してGitHubにコミットするだけでメルマガの中身が変わる。
 """
 
 import os
 import sys
+import re
 import smtplib
 import datetime
 from email.mime.multipart import MIMEMultipart
@@ -20,109 +14,172 @@ from email.mime.text import MIMEText
 from email.header import Header
 from pathlib import Path
 
-# ---------------------------------------------------------------
-# 設定
-# ---------------------------------------------------------------
 ARCHIVE_DIR = Path(__file__).parent / "archive"
+CONTENT_FILE = Path(__file__).parent / "content.md"
 NEWSLETTER_TITLE = "AI Weekly Insight"
-SUBTITLE = "ビジネスと副業に効く、今週のAI情報"
+SUBTITLE = "ビジネス×AI ? 今週の厳選情報"
 
 # ---------------------------------------------------------------
-# 1. 固定テンプレート本文
+# 1. content.md を読み込んでHTML変換
 # ---------------------------------------------------------------
-def generate_body(date_str: str, issue_no: int) -> str:
-    return f"""
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">今週のハイライト</h2>
-    <p style="margin:8px 0;line-height:1.8;">
-      今週もAI業界は急速に進化しています。ビジネスや副業に役立つ情報をお届けします。
-      このメールマガジンは毎週月曜日に自動配信されます。
-    </p>
+def md_to_html(md: str) -> str:
+    """Markdownを高品質なビジネス向けHTMLに変換する。"""
 
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">　 トップニュース</h2>
+    # コメントを除去
+    md = re.sub(r'<!--.*?-->', '', md, flags=re.DOTALL)
 
-    <h3 style="margin:20px 0 8px;font-size:16px;color:#1f2937;">AIツールの業務活用が加速</h3>
-    <p style="margin:8px 0;line-height:1.8;">
-      ChatGPT・Claude・Geminiなどの生成AIが、企業の日常業務に組み込まれるケースが増えています。
-      特に文書作成・メール返信・データ分析の分野で導入が進んでいます。
-      <strong>ビジネス活用ポイント:</strong> まず1つの繰り返し作業をAIに任せることから始めましょう。
-    </p>
+    # H1(タイトル行)を除去
+    md = re.sub(r'^#\s+.+\n?', '', md, flags=re.MULTILINE)
 
-    <h3 style="margin:20px 0 8px;font-size:16px;color:#1f2937;">画像生成AIの精度が向上</h3>
-    <p style="margin:8px 0;line-height:1.8;">
-      Midjourney・Stable Diffusionなどの画像生成AIが、より高精度な画像を生成できるようになりました。
-      バナー・SNS画像・LP素材などを低コストで作成できます。
-      <strong>ビジネス活用ポイント:</strong> デザイナーへの外注コストを削減できる可能性があります。
-    </p>
+    html_lines = []
+    in_list = False
 
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">　 ビジネス活用アイデア</h2>
-    <p style="margin:8px 0;line-height:1.8;">
-      <strong>① 議事録の自動化:</strong>
-      会議の録音をWhisperなどの音声認識AIでテキスト化し、
-      ChatGPTで要点をまとめる仕組みを作ると、議事録作成時間を大幅に削減できます。
-    </p>
-    <p style="margin:8px 0;line-height:1.8;">
-      <strong>② メール返信テンプレートのAI化:</strong>
-      よく来る問い合わせメールへの返信をAIに下書きさせ、
-      確認・送信するだけのフローにすると対応時間が半減します。
-    </p>
+    for line in md.splitlines():
+        line = line.rstrip()
 
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">　 副業・サイドビジネスの視点</h2>
-    <p style="margin:8px 0;line-height:1.8;">
-      <strong>AIを使ったLP制作の需要増加:</strong>
-      中小企業のランディングページ制作をAIツールで効率化し、
-      低価格・短納期で受注するフリーランサーが増えています。
-      Claude・ChatGPTでコピーを生成し、制作コストを大幅に削減できます。
-    </p>
+        # インライン装飾
+        line = re.sub(r'\*\*(.+?)\*\*', r'<strong style="color:#1e1b4b;">\1</strong>', line)
+        line = re.sub(r'\*(.+?)\*', r'<em>\1</em>', line)
+        line = re.sub(
+            r'(https?://[^\s<>\)]+)',
+            r'<a href="\1" style="color:#7c3aed;text-decoration:none;border-bottom:1px solid #c4b5fd;">\1</a>',
+            line,
+        )
 
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">　 今週の注目ツール</h2>
-    <p style="margin:8px 0;line-height:1.8;">
-      <strong>Perplexity AI:</strong>
-      Web検索と回答生成を組み合わせたAI検索エンジン。
-      無料プランあり。最新情報のリサーチに最適で、情報収集の時間を大幅に短縮できます。
-    </p>
+        if line.startswith('## '):
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            text = line[3:]
+            # アイコンを取り出してセクションヘッダーを装飾
+            html_lines.append(f'''
+<table width="100%" cellpadding="0" cellspacing="0" style="margin:32px 0 16px;">
+  <tr>
+    <td style="background:linear-gradient(90deg,#1e1b4b,#7c3aed);
+               padding:10px 18px;border-radius:6px 0 0 6px;">
+      <span style="font-size:17px;font-weight:700;color:#ffffff;
+                   letter-spacing:0.5px;">{text}</span>
+    </td>
+    <td style="background:linear-gradient(90deg,#7c3aed,#ec4899);
+               width:6px;border-radius:0 6px 6px 0;"></td>
+  </tr>
+</table>''')
 
-    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
-    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
-    border-radius:6px;">編集後記</h2>
-    <p style="margin:8px 0;line-height:1.8;">
-      Vol.{issue_no}をお届けしました。{date_str}現在の情報をもとに構成しています。
-      来週もAI最新情報をお届けします。引き続きよろしくお願いいたします。
-    </p>
-    """
+        elif line.startswith('### '):
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            text = line[4:]
+            html_lines.append(f'''
+<div style="margin:20px 0 6px;padding-left:12px;
+            border-left:3px solid #7c3aed;">
+  <span style="font-size:15px;font-weight:700;color:#1e1b4b;">{text}</span>
+</div>''')
+
+        elif line.startswith('- '):
+            if not in_list:
+                html_lines.append('<ul style="margin:8px 0;padding-left:0;list-style:none;">')
+                in_list = True
+            text = line[2:]
+            html_lines.append(
+                f'<li style="padding:4px 0 4px 20px;position:relative;">'
+                f'<span style="position:absolute;left:0;color:#7c3aed;">?</span>{text}</li>')
+
+        elif line == '':
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            html_lines.append('')
+
+        else:
+            if in_list:
+                html_lines.append('</ul>')
+                in_list = False
+            html_lines.append(
+                f'<p style="margin:8px 0;line-height:1.9;color:#374151;font-size:14px;">{line}</p>')
+
+    if in_list:
+        html_lines.append('</ul>')
+
+    return '\n'.join(html_lines)
+
+
+def load_content() -> str:
+    if not CONTENT_FILE.exists():
+        raise FileNotFoundError(f"content.md が見つかりません: {CONTENT_FILE}")
+    return CONTENT_FILE.read_text(encoding='utf-8')
 
 
 # ---------------------------------------------------------------
-# 2. HTMLメール組版
+# 2. HTMLメール組版（ビジネス向けデザイン）
 # ---------------------------------------------------------------
 def build_html_email(body_html: str, issue_no: int, date_str: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="ja">
-<head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#f3f4f6;font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;color:#111827;">
-  <div style="max-width:640px;margin:0 auto;padding:24px 16px;">
-    <div style="background:linear-gradient(135deg,#1e1b4b,#7c3aed);border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
-      <div style="font-size:26px;font-weight:bold;color:#fff;letter-spacing:1px;">　 {NEWSLETTER_TITLE}</div>
-      <div style="font-size:13px;color:#c4b5fd;margin-top:8px;">{SUBTITLE}</div>
-      <div style="font-size:12px;color:#a78bfa;margin-top:4px;">Vol.{issue_no} | {date_str}</div>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
+<body style="margin:0;padding:0;background:#f0f0f5;
+             font-family:'Hiragino Sans','Yu Gothic',Meiryo,sans-serif;">
+
+  <!-- ヘッダー -->
+  <div style="max-width:620px;margin:0 auto;">
+    <div style="background:#0f0c29;
+                background:linear-gradient(135deg,#0f0c29 0%,#302b63 50%,#24243e 100%);
+                padding:0;">
+
+      <!-- ロゴバー -->
+      <div style="padding:28px 32px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td>
+              <div style="font-size:11px;color:#a78bfa;letter-spacing:3px;
+                          text-transform:uppercase;margin-bottom:6px;">Weekly Business Intelligence</div>
+              <div style="font-size:28px;font-weight:800;color:#ffffff;
+                          letter-spacing:-0.5px;line-height:1.1;">
+                　 {NEWSLETTER_TITLE}
+              </div>
+              <div style="font-size:13px;color:#c4b5fd;margin-top:6px;
+                          font-weight:400;letter-spacing:0.5px;">{SUBTITLE}</div>
+            </td>
+            <td style="text-align:right;vertical-align:top;">
+              <div style="display:inline-block;background:rgba(124,58,237,0.3);
+                          border:1px solid rgba(196,181,253,0.3);
+                          border-radius:6px;padding:8px 14px;text-align:center;">
+                <div style="font-size:10px;color:#a78bfa;letter-spacing:1px;">VOL.</div>
+                <div style="font-size:22px;font-weight:800;color:#ffffff;line-height:1;">{issue_no}</div>
+              </div>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- 日付バー -->
+      <div style="margin-top:20px;padding:10px 32px;
+                  background:rgba(0,0,0,0.2);
+                  border-top:1px solid rgba(196,181,253,0.15);">
+        <span style="font-size:12px;color:#a78bfa;">　 {date_str} 配信</span>
+        <span style="font-size:12px;color:#6d28d9;margin:0 8px;">|</span>
+        <span style="font-size:12px;color:#a78bfa;">毎週月曜日発行</span>
+      </div>
     </div>
-    <div style="background:#ffffff;border-radius:0 0 12px 12px;padding:24px;font-size:14px;">
+
+    <!-- 本文 -->
+    <div style="background:#ffffff;padding:28px 32px 8px;">
       {body_html}
-      <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px;">
-      <p style="font-size:11px;color:#9ca3af;text-align:center;">
-        本メールは自動配信されています。<br>
-        毎週月曜日にお届けします。
-      </p>
     </div>
+
+    <!-- フッター -->
+    <div style="background:#1e1b4b;padding:20px 32px;border-radius:0 0 0 0;">
+      <div style="border-top:1px solid rgba(196,181,253,0.2);padding-top:16px;">
+        <p style="font-size:11px;color:#6d5fa6;margin:0;line-height:1.8;text-align:center;">
+          本メールは自動配信システムにより送信されています。<br>
+          AI Weekly Insight ? ビジネスパーソンのためのAI情報メールマガジン
+        </p>
+      </div>
+    </div>
+
   </div>
 </body>
 </html>"""
@@ -138,7 +195,7 @@ def get_issue_number() -> int:
 
 def send_email(html: str, subject: str, recipients: list):
     gmail_addr = os.environ["GMAIL_ADDRESS"]
-    gmail_pass = os.environ["GMAIL_APP_PASSWORD"]
+    gmail_pass = os.environ["GMAIL_APP_PASSWORD"].strip()
 
     print(f"[2/2] メール送信中... ({len(recipients)}件)")
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
@@ -159,8 +216,9 @@ def main():
     date_str = today.strftime("%Y年%m月%d日")
     issue_no = get_issue_number()
 
-    print(f"[1/2] HTMLメール組版中... (Vol.{issue_no})")
-    body_html = generate_body(date_str, issue_no)
+    print(f"[1/2] content.md を読み込んで組版中... (Vol.{issue_no})")
+    md = load_content()
+    body_html = md_to_html(md)
     html = build_html_email(body_html, issue_no, date_str)
 
     stamp = today.strftime("%Y-%m-%d")
@@ -172,7 +230,7 @@ def main():
         return
 
     recipients = [a.strip() for a in os.environ["RECIPIENTS"].split(",") if a.strip()]
-    subject = f"【{NEWSLETTER_TITLE} Vol.{issue_no}】{date_str} 今週のAIビジネス情報"
+    subject = f"【AI Weekly Insight Vol.{issue_no}】{date_str} 今週のAIビジネス情報"
     send_email(html, subject, recipients)
     print("完了 　")
 
