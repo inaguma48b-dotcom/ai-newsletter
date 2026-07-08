@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 """
-AI Weekly Newsletter Generator (OpenRouter版)
-=============================================
-OpenRouter API (無料枠) で最新AI情報を生成し、
-HTML形式のメールマガジンを Gmail SMTP で配信する。
+AI Weekly Newsletter Generator (固定テンプレート版)
+====================================================
+AIなしで固定テンプレートのメールマガジンを Gmail SMTP で配信する。
+仕組みの動作確認用。中身は後でAIに差し替え可能。
 
 必要な環境変数:
-  OPENROUTER_API_KEY  : OpenRouter APIキー
   GMAIL_ADDRESS       : 送信元Gmailアドレス
   GMAIL_APP_PASSWORD  : Gmailアプリパスワード(16桁)
   RECIPIENTS          : 宛先(カンマ区切りで複数可)
 """
 
 import os
-import re
 import sys
-import json
 import smtplib
 import datetime
-import urllib.request
-import urllib.error
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.header import Header
@@ -28,139 +23,88 @@ from pathlib import Path
 # ---------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------
-OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 NEWSLETTER_TITLE = "AI Weekly Insight"
 SUBTITLE = "ビジネスと副業に効く、今週のAI情報"
 
 # ---------------------------------------------------------------
-# 1. OpenRouter APIで記事生成
+# 1. 固定テンプレート本文
 # ---------------------------------------------------------------
-SYSTEM_PROMPT = """あなたは日本のビジネスパーソン向けAI情報メールマガジンの編集長です。
-「明日から仕事や副業に使える」実用情報に絞ったメールマガジン本文を作成してください。
+def generate_body(date_str: str, issue_no: int) -> str:
+    return f"""
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">今週のハイライト</h2>
+    <p style="margin:8px 0;line-height:1.8;">
+      今週もAI業界は急速に進化しています。ビジネスや副業に役立つ情報をお届けします。
+      このメールマガジンは毎週月曜日に自動配信されます。
+    </p>
 
-執筆方針:
-- 結論ファースト。各項目は「何が起きた→なぜ重要→どう使えるか」の順
-- 専門用語には一言補足を付ける
-- ビジネス・副業への活用視点を必ず入れる
-- 2026年最新のAIトレンドを反映する
-- Markdown以外の前置き・後書きは一切不要"""
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">　 トップニュース</h2>
 
-USER_PROMPT = """本日は{today}です。直近1週間({week_start}?{today})のAI業界動向をまとめ、
-以下の構造のMarkdownでメールマガジン本文を作成してください。
+    <h3 style="margin:20px 0 8px;font-size:16px;color:#1f2937;">AIツールの業務活用が加速</h3>
+    <p style="margin:8px 0;line-height:1.8;">
+      ChatGPT・Claude・Geminiなどの生成AIが、企業の日常業務に組み込まれるケースが増えています。
+      特に文書作成・メール返信・データ分析の分野で導入が進んでいます。
+      <strong>ビジネス活用ポイント:</strong> まず1つの繰り返し作業をAIに任せることから始めましょう。
+    </p>
 
-## 今週のハイライト
-（3行で今週の要点）
+    <h3 style="margin:20px 0 8px;font-size:16px;color:#1f2937;">画像生成AIの精度が向上</h3>
+    <p style="margin:8px 0;line-height:1.8;">
+      Midjourney・Stable Diffusionなどの画像生成AIが、より高精度な画像を生成できるようになりました。
+      バナー・SNS画像・LP素材などを低コストで作成できます。
+      <strong>ビジネス活用ポイント:</strong> デザイナーへの外注コストを削減できる可能性があります。
+    </p>
 
-## 　 トップニュース（3?4本）
-### ニュースタイトル
-本文（3?5文）。**ビジネス活用ポイント:** 一言。
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">　 ビジネス活用アイデア</h2>
+    <p style="margin:8px 0;line-height:1.8;">
+      <strong>① 議事録の自動化:</strong>
+      会議の録音をWhisperなどの音声認識AIでテキスト化し、
+      ChatGPTで要点をまとめる仕組みを作ると、議事録作成時間を大幅に削減できます。
+    </p>
+    <p style="margin:8px 0;line-height:1.8;">
+      <strong>② メール返信テンプレートのAI化:</strong>
+      よく来る問い合わせメールへの返信をAIに下書きさせ、
+      確認・送信するだけのフローにすると対応時間が半減します。
+    </p>
 
-## 　 ビジネス活用アイデア
-今週のトレンドを踏まえた具体的な業務活用アイデアを2つ（各3?4文）
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">　 副業・サイドビジネスの視点</h2>
+    <p style="margin:8px 0;line-height:1.8;">
+      <strong>AIを使ったLP制作の需要増加:</strong>
+      中小企業のランディングページ制作をAIツールで効率化し、
+      低価格・短納期で受注するフリーランサーが増えています。
+      Claude・ChatGPTでコピーを生成し、制作コストを大幅に削減できます。
+    </p>
 
-## 　 副業・サイドビジネスの視点
-AIを使った副業のヒントや市場動向を1?2つ（各3?4文）
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">　 今週の注目ツール</h2>
+    <p style="margin:8px 0;line-height:1.8;">
+      <strong>Perplexity AI:</strong>
+      Web検索と回答生成を組み合わせたAI検索エンジン。
+      無料プランあり。最新情報のリサーチに最適で、情報収集の時間を大幅に短縮できます。
+    </p>
 
-## 　 今週の注目ツール
-注目のAIツールを1?2個。料金・特徴・向いている人を簡潔に。
-
-## 編集後記
-2?3文の軽いまとめ"""
-
-
-def call_openrouter(prompt: str) -> str:
-    """OpenRouter APIをurllib（標準ライブラリ）で呼び出す。"""
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY が設定されていません")
-    url = "https://openrouter.ai/api/v1/chat/completions"
-
-    payload = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        "max_tokens": 4096,
-        "temperature": 0.7,
-    }).encode("utf-8")
-
-    auth_header = "Bearer " + api_key
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method="POST",
-    )
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", auth_header)
-    req.add_header("HTTP-Referer", "https://github.com/inaguma48b-dotcom/ai-newsletter")
-    req.add_header("X-Title", "AI Weekly Newsletter")
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8")
-        raise RuntimeError(f"OpenRouter APIエラー {e.code}: {body}") from e
-
-    try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"OpenRouter APIレスポンス解析失敗: {data}") from e
-
-
-def generate_newsletter() -> str:
-    today = datetime.date.today()
-    week_start = today - datetime.timedelta(days=7)
-
-    print(f"[1/3] OpenRouter APIで記事生成中... (model={OPENROUTER_MODEL})")
-
-    prompt = USER_PROMPT.format(
-        today=today.strftime("%Y年%m月%d日"),
-        week_start=week_start.strftime("%Y年%m月%d日"),
-    )
-
-    body_md = call_openrouter(prompt)
-
-    if len(body_md) < 300:
-        raise RuntimeError(f"生成された本文が短すぎます: {body_md}")
-
-    print(f"  生成完了（{len(body_md)}文字）")
-    return body_md.strip()
+    <h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;
+    background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;
+    border-radius:6px;">編集後記</h2>
+    <p style="margin:8px 0;line-height:1.8;">
+      Vol.{issue_no}をお届けしました。{date_str}現在の情報をもとに構成しています。
+      来週もAI最新情報をお届けします。引き続きよろしくお願いいたします。
+    </p>
+    """
 
 
 # ---------------------------------------------------------------
-# 2. Markdown → HTMLメール変換
+# 2. HTMLメール組版
 # ---------------------------------------------------------------
-def md_to_html(md: str) -> str:
-    html_lines = []
-    for line in md.splitlines():
-        line = line.rstrip()
-        line = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
-        line = re.sub(
-            r"(https?://[^\s<>\)]+)",
-            r'<a href="\1" style="color:#7c3aed;">\1</a>',
-            line,
-        )
-        if line.startswith("### "):
-            html_lines.append(
-                f'<h3 style="margin:20px 0 8px;font-size:16px;color:#1f2937;">{line[4:]}</h3>')
-        elif line.startswith("## "):
-            html_lines.append(
-                f'<h2 style="margin:28px 0 12px;padding:8px 12px;font-size:18px;'
-                f'background:linear-gradient(90deg,#7c3aed,#ec4899);color:#fff;'
-                f'border-radius:6px;">{line[3:]}</h2>')
-        elif line.startswith("- "):
-            html_lines.append(f'<p style="margin:4px 0 4px 16px;">・{line[2:]}</p>')
-        elif line == "":
-            html_lines.append("")
-        else:
-            html_lines.append(f'<p style="margin:8px 0;line-height:1.8;">{line}</p>')
-    return "\n".join(html_lines)
-
-
-def build_html_email(body_md: str, issue_no: int, date_str: str) -> str:
-    body_html = md_to_html(body_md)
+def build_html_email(body_html: str, issue_no: int, date_str: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="UTF-8"></head>
@@ -175,7 +119,8 @@ def build_html_email(body_md: str, issue_no: int, date_str: str) -> str:
       {body_html}
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 16px;">
       <p style="font-size:11px;color:#9ca3af;text-align:center;">
-        本メールはAIによる自動生成です。重要な意思決定の際は出典元をご確認ください。
+        本メールは自動配信されています。<br>
+        毎週月曜日にお届けします。
       </p>
     </div>
   </div>
@@ -195,7 +140,7 @@ def send_email(html: str, subject: str, recipients: list):
     gmail_addr = os.environ["GMAIL_ADDRESS"]
     gmail_pass = os.environ["GMAIL_APP_PASSWORD"]
 
-    print(f"[3/3] メール送信中... ({len(recipients)}件)")
+    print(f"[2/2] メール送信中... ({len(recipients)}件)")
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(gmail_addr, gmail_pass)
         for to_addr in recipients:
@@ -214,13 +159,11 @@ def main():
     date_str = today.strftime("%Y年%m月%d日")
     issue_no = get_issue_number()
 
-    body_md = generate_newsletter()
-
-    print("[2/3] HTMLメール組版中...")
-    html = build_html_email(body_md, issue_no, date_str)
+    print(f"[1/2] HTMLメール組版中... (Vol.{issue_no})")
+    body_html = generate_body(date_str, issue_no)
+    html = build_html_email(body_html, issue_no, date_str)
 
     stamp = today.strftime("%Y-%m-%d")
-    (ARCHIVE_DIR / f"{stamp}_vol{issue_no}.md").write_text(body_md, encoding="utf-8")
     (ARCHIVE_DIR / f"{stamp}_vol{issue_no}.html").write_text(html, encoding="utf-8")
     print(f"  アーカイブ保存: archive/{stamp}_vol{issue_no}.html")
 
