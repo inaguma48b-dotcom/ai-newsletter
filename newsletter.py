@@ -89,7 +89,7 @@ def call_openrouter(prompt: str) -> str:
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": "Bearer " + str(api_key),
             "HTTP-Referer": "https://github.com/inaguma48b-dotcom/ai-newsletter",
             "X-Title": "AI Weekly Newsletter",
         },
