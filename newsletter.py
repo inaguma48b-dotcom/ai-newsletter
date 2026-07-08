@@ -32,7 +32,7 @@ from pathlib import Path
 # ---------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 NEWSLETTER_TITLE = "AI Weekly Insight"
 SUBTITLE = "ビジネスと副業に効く、今週のAI情報"
