@@ -24,11 +24,11 @@ jobs:
 
       - name: ニュースレター生成 & 送信
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENTS: ${{ secrets.RECIPIENTS }}
-        run: python newsletter.py
+        run: python ai-newsletter/newsletter.py
 
       - name: バックナンバーをコミット
         run: |
