@@ -71,7 +71,9 @@ AIを使った副業のヒントや市場動向を1?2つ（各3?4文）
 
 def call_openrouter(prompt: str) -> str:
     """OpenRouter APIをurllib（標準ライブラリ）で呼び出す。"""
-    api_key = os.environ["OPENROUTER_API_KEY"]
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY が設定されていません")
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     payload = json.dumps({
@@ -84,17 +86,16 @@ def call_openrouter(prompt: str) -> str:
         "temperature": 0.7,
     }).encode("utf-8")
 
+    auth_header = "Bearer " + api_key
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + str(api_key),
-            "HTTP-Referer": "https://github.com/inaguma48b-dotcom/ai-newsletter",
-            "X-Title": "AI Weekly Newsletter",
-        },
         method="POST",
     )
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", auth_header)
+    req.add_header("HTTP-Referer", "https://github.com/inaguma48b-dotcom/ai-newsletter")
+    req.add_header("X-Title", "AI Weekly Newsletter")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read().decode("utf-8"))
