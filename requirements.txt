@@ -1,2 +1,3 @@
-# 標準ライブラリのみ使用のため追加インストール不要
-# GitHub Actionsでも pip install は不要
+# research.py（RSS収集 + Gemini無料枠での編集）で使用
+# RSS収集は標準ライブラリのみ。newsletter.py も標準ライブラリのみで動く
+google-genai>=2.0.0

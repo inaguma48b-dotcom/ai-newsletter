@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 22 * * 0"
   workflow_dispatch:
+    inputs:
+      skip_research:
+        description: "リサーチを飛ばして現在の content.md をそのまま配信する"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -11,7 +16,7 @@ permissions:
 jobs:
   send-newsletter:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: リポジトリを取得
         uses: actions/checkout@v4
@@ -20,6 +25,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: AI情報を収集して content.md を生成
+        if: ${{ inputs.skip_research != true }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python research.py
 
       - name: ニュースレター送信
         env:
@@ -28,10 +43,10 @@ jobs:
           RECIPIENTS: ${{ secrets.RECIPIENTS }}
         run: python newsletter.py
 
-      - name: バックナンバーをコミット
+      - name: 本文とバックナンバーをコミット
         run: |
           git config user.name "newsletter-bot"
           git config user.email "actions@github.com"
-          git add archive/
-          git diff --cached --quiet || git commit -m "archive: $(date +%Y-%m-%d) 号を追加"
+          git add content.md archive/
+          git diff --cached --quiet || git commit -m "newsletter: $(TZ=Asia/Tokyo date +%Y-%m-%d) 号を配信"
           git push

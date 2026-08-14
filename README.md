@@ -1,17 +1,36 @@
 # 🔦 AI Weekly Insight — 全自動AIメールマガジンシステム
 
-Claude API(Web検索ツール)で最新AI情報をディープリサーチし、ビジネス・副業向けメールマガジンを**毎週月曜7時に全自動配信**するシステム。GitHub Actionsで動くため、自宅PCの電源が入っていなくても動作する。
+無料のRSSフィードから最新AI情報を集め、Gemini API(無料枠)で編集して、ビジネス・副業向けメールマガジンを**毎週月曜7時に全自動配信**するシステム。GitHub Actionsで動くため、自宅PCの電源が入っていなくても動作する。
+
+**ランニングコストは実質0円**(Gemini無料枠 + GitHub Actions無料枠 + Gmail)。
 
 ## 仕組み
 
 ```
 GitHub Actions (毎週月曜 07:00 JST)
    │
-   ├─ ① Claude API + Web検索 → 直近1週間のAI情報をディープリサーチ
-   ├─ ② Markdown → HTMLメールに組版(紫グラデ・ペンライト風デザイン)
-   ├─ ③ Gmail SMTP で購読者に一斉送信
-   └─ ④ バックナンバーを archive/ にコミット(GitHub Pages公開にも流用可)
+   ├─ ① research.py   : 無料RSS(ITmedia AI+ / TechCrunch AI / Googleニュース等)から
+   │                    直近1週間のAI記事を収集 → 重複除去
+   │                    → Gemini(無料枠)が取捨選択・執筆 → content.md を自動生成
+   ├─ ② newsletter.py : content.md → HTMLメールに組版(紫グラデ・ペンライト風デザイン)
+   ├─ ③ newsletter.py : Gmail SMTP で購読者に一斉送信
+   └─ ④ content.md とバックナンバーを archive/ にコミット(GitHub Pages公開にも流用可)
 ```
+
+### なぜRSSで集めるのか
+
+Gemini APIの「Google検索グラウンディング」は**無料枠では使えない**(有料プランの課金設定が必要)。
+そのため**情報の取得はRSS(無料・APIキー不要)が担当し、Geminiは「編集者」に徹する**構成にしている。
+検索グラウンディングを使わないぶん、Geminiには収集済み記事の範囲でしか書かせない制約を課しており、
+これは**事実の捏造を防ぐ効果**もある。
+
+| ファイル | 役割 |
+|---|---|
+| `research.py` | AI情報の取得。RSS収集 → Geminiで執筆 → `content.md` を書き出す |
+| `content.md` | その週の本文(自動生成。手で書き換えても配信できる) |
+| `newsletter.py` | `content.md` の組版・送信・アーカイブ |
+
+リサーチに失敗した場合はワークフローがそこで停止し、**メールは送信されない**(古い内容の誤配信を防ぐため)。
 
 ## セットアップ手順(初回のみ・約15分)
 
@@ -29,11 +48,27 @@ git remote add origin https://github.com/<ユーザー名>/ai-newsletter.git
 git push -u origin main
 ```
 
-### 2. Anthropic APIキー取得
+### 2. Gemini APIキー取得(無料)
 
-1. https://console.anthropic.com にログイン
-2. Settings → API Keys → Create Key
-3. **管理画面でWeb検索が有効になっていることを確認**(Settings → Privacy / Features)
+1. https://aistudio.google.com/apikey にGoogleアカウントでログイン
+2. 「APIキーを作成」で発行(**クレジットカード登録不要**)
+
+コーチングアプリ(mentora)で既にGemini APIキーを使っている場合は、**同じキーを使い回せる**。
+無料枠は1分あたり・1日あたりのリクエスト数で制限されるが、本システムは**週1回1リクエスト**しか
+使わないため、他アプリと共用しても枯渇しない。
+
+#### モデルについて(重要)
+
+既定は `gemini-flash-latest`(mentoraと同じ)。**Gemini 2.0系・2.5系は新規ユーザーには提供終了**
+しており、`gemini-2.5-flash` を指定すると404エラーになる:
+
+```
+404 NOT_FOUND: This model models/gemini-2.5-flash is no longer available to new users.
+```
+
+`gemini-flash-latest` は常に現行のFlash系を指すエイリアスなので、Googleが個別バージョンを
+廃止しても壊れない。バージョンを固定したい場合は `GEMINI_MODEL` に `gemini-3.5-flash` などを指定する
+(利用可能なモデルは `python -c "from google import genai; [print(m.name) for m in genai.Client().models.list()]"` で確認できる)。
 
 ### 3. Gmailアプリパスワード発行
 
@@ -46,7 +81,7 @@ git push -u origin main
 
 | Secret名 | 値 |
 |---|---|
-| `ANTHROPIC_API_KEY` | `sk-ant-...` |
+| `GEMINI_API_KEY` | AI Studioで発行したキー(`AIza...`) |
 | `GMAIL_ADDRESS` | 送信元Gmailアドレス |
 | `GMAIL_APP_PASSWORD` | 16桁のアプリパスワード(スペースなし) |
 | `RECIPIENTS` | 宛先。複数はカンマ区切り `a@x.com,b@y.com` |
@@ -60,27 +95,64 @@ git push -u origin main
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...
+export GEMINI_API_KEY=AIza...        # Windows PowerShell は $env:GEMINI_API_KEY="AIza..."
+
+# ① RSS収集だけ試す(APIキー不要・料金ゼロ。何本集まったか確認できる)
+python research.py --feeds-only
+
+# ② 収集+執筆を試す(content.md は上書きせず標準出力に表示)
+python research.py --dry-run
+
+# ③ 収集+執筆して content.md を更新
+python research.py
+
+# ④ 組版だけ試す(メールは送らない)
 python newsletter.py --dry-run
 # → archive/ に .html が生成されるのでブラウザで確認
 ```
 
+RSS収集は9フィードを順に取りに行くため**1〜2分ほどかかる**(APIの遅さではない)。
+
+手動実行時に `Run workflow` の **「リサーチを飛ばす」** にチェックを入れると、
+リサーチをスキップして現在の `content.md` をそのまま配信できる(組版・送信のテスト用)。
+
 ## ランニングコスト目安
 
-- Web検索: $10 / 1,000回 → 週12回 × 4週 ≒ **月$0.5前後**
-- トークン(Sonnet 4.6): 週1回のリサーチで **月$1〜2程度**
+- RSS収集: **0円**(APIキー不要)
+- Gemini API: 無料枠内。**週1回1リクエスト**のみなので上限に当たらない
 - GitHub Actions: Privateリポジトリでも無料枠(月2,000分)で余裕
-- **合計: 月200〜400円程度**
+- Gmail: 無料(1日500通まで)
+- **合計: 0円**
+
+無料枠のため、送信した内容がGoogleのモデル改善に利用される可能性がある
+(有料枠では利用されない)。本システムが送るのは公開ニュースの見出しのみなので実害はないが、
+機密情報を扱う用途に流用する場合は注意すること。
 
 ## カスタマイズポイント
 
 | 変更したい内容 | 場所 |
 |---|---|
 | 配信曜日・時刻 | `.github/workflows/weekly-newsletter.yml` の `cron`(UTC表記に注意) |
-| リサーチの深さ | `newsletter.py` の `MAX_SEARCHES`(増やすと詳しく・高コスト) |
-| モデル | `MODEL = "claude-opus-4-8"` に変えると品質重視 |
-| 紙面構成 | `SYSTEM_PROMPT` の出力フォーマット部分 |
-| デザイン | `build_html_email()` のインラインCSS |
+| 情報源を追加・変更 | `research.py` の `DIRECT_FEEDS`(RSSのURL)と `NEWS_QUERIES`(検索語) |
+| 収集する期間・件数 | `research.py` の `DAYS` / `MAX_ARTICLES` |
+| モデル | `research.py` の `MODEL`、または環境変数 `GEMINI_MODEL` |
+| 情報の鮮度 | `research.py` の `DAYS`(既定7日) |
+| 紙面構成 | `research.py` の `build_prompt()` の「出力フォーマット」と `REQUIRED_SECTIONS` |
+| 執筆トーン | `research.py` の `SYSTEM_INSTRUCTION` |
+| デザイン | `newsletter.py` の `build_html_email()` のインラインCSS |
+
+紙面構成を変えるときは、`build_prompt()` の見出しと `REQUIRED_SECTIONS` の
+両方を揃えること(不一致だと生成物が検証で弾かれる)。
+
+### 品質を上げたい場合
+
+RSSの見出しと概要文(100〜250字)だけを根拠に書かせているため、記事本文まで読ませる方式に比べると
+**1本あたりの掘り下げは浅くなる**。これは捏造を防ぐための意図的な制約でもある。
+
+改善したい場合:
+- 情報の濃い一次ソースのRSSを `DIRECT_FEEDS` に追加する(最も効果的・無料)
+- Googleニュースは見出しのみで概要が薄いため、`NEWS_QUERIES` を絞って一次ソースを増やす
+- Gemini側で課金を有効にすると検索グラウンディングが使えるようになる(有料)
 
 ## 発展アイデア
 

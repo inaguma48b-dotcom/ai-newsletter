@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI Weekly Newsletter ? content.md読み込み版
+AI Weekly Newsletter — content.md読み込み版
 content.mdを編集してGitHubにコミットするだけでメルマガの中身が変わる。
 """
 
@@ -17,7 +17,8 @@ from pathlib import Path
 ARCHIVE_DIR = Path(__file__).parent / "archive"
 CONTENT_FILE = Path(__file__).parent / "content.md"
 NEWSLETTER_TITLE = "AI Weekly Insight"
-SUBTITLE = "ビジネス×AI ? 今週の厳選情報"
+SUBTITLE = "ビジネス×AI — 今週の厳選情報"
+JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # ---------------------------------------------------------------
 # 1. content.md を読み込んでHTML変換
@@ -83,7 +84,7 @@ def md_to_html(md: str) -> str:
             text = line[2:]
             html_lines.append(
                 f'<li style="padding:4px 0 4px 20px;position:relative;">'
-                f'<span style="position:absolute;left:0;color:#7c3aed;">?</span>{text}</li>')
+                f'<span style="position:absolute;left:0;color:#7c3aed;">▸</span>{text}</li>')
 
         elif line == '':
             if in_list:
@@ -175,7 +176,7 @@ def build_html_email(body_html: str, issue_no: int, date_str: str) -> str:
       <div style="border-top:1px solid rgba(196,181,253,0.2);padding-top:16px;">
         <p style="font-size:11px;color:#6d5fa6;margin:0;line-height:1.8;text-align:center;">
           本メールは自動配信システムにより送信されています。<br>
-          AI Weekly Insight ? ビジネスパーソンのためのAI情報メールマガジン
+          AI Weekly Insight — ビジネスパーソンのためのAI情報メールマガジン
         </p>
       </div>
     </div>
@@ -207,12 +208,13 @@ def send_email(html: str, subject: str, recipients: list):
             msg["To"] = to_addr
             msg.attach(MIMEText(html, "html", "utf-8"))
             server.sendmail(gmail_addr, to_addr, msg.as_string())
-            print(f"  ? {to_addr}")
+            print(f"  ✓ {to_addr}")
 
 
 def main():
     dry_run = "--dry-run" in sys.argv
-    today = datetime.date.today()
+    # GitHub Actions は UTC で動くため、日付は必ず JST に直してから使う
+    today = datetime.datetime.now(JST).date()
     date_str = today.strftime("%Y年%m月%d日")
     issue_no = get_issue_number()
 
