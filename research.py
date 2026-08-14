@@ -56,14 +56,18 @@ NEWS_QUERIES = [
     "AI 副業 OR 個人 活用",
 ]
 
-REQUIRED_SECTIONS = [
-    "## 今週のハイライト",
-    "## 📰 トップニュース",
-    "## 💼 ビジネス活用アイデア",
-    "## 💰 副業・サイドビジネスの視点",
-    "## 🛠 今週の注目ツール",
-    "## 編集後記",
+# (正式な見出し, 判定に使うキーワード)
+# モデルは絵文字を落としたり異体字セレクタ付き(🛠️)で返したりと揺れるため、
+# キーワードで判定して正式な見出しに書き戻す（弾かずに直す）。
+SECTIONS = [
+    ("## 今週のハイライト", "ハイライト"),
+    ("## 📰 トップニュース", "トップニュース"),
+    ("## 💼 ビジネス活用アイデア", "活用アイデア"),
+    ("## 💰 副業・サイドビジネスの視点", "副業"),
+    ("## 🛠 今週の注目ツール", "注目ツール"),
+    ("## 編集後記", "編集後記"),
 ]
+REQUIRED_SECTIONS = [s for s, _ in SECTIONS]
 
 
 # ---------------------------------------------------------------
@@ -317,16 +321,33 @@ def generate(prompt: str) -> str:
 # ---------------------------------------------------------------
 # 3. 抽出と検証
 # ---------------------------------------------------------------
+def normalize_headings(body: str) -> str:
+    """`## 見出し` をキーワードで判定し、絵文字込みの正式な表記に揃える。"""
+    lines = []
+    for line in body.splitlines():
+        if line.startswith("## "):
+            for canonical, keyword in SECTIONS:
+                if keyword in line:
+                    line = canonical
+                    break
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def extract_newsletter(raw: str) -> str:
     match = re.search(r"<newsletter>(.*?)</newsletter>", raw, flags=re.DOTALL)
     if not match:
         raise RuntimeError("<newsletter> タグが見つかりません。モデルの出力:\n" + raw[:2000])
 
-    body = match.group(1).strip()
+    body = normalize_headings(match.group(1).strip())
 
     missing = [s for s in REQUIRED_SECTIONS if s not in body]
     if missing:
-        raise RuntimeError("必須セクションが欠けています: " + ", ".join(missing))
+        found = [l for l in body.splitlines() if l.startswith("## ")]
+        raise RuntimeError(
+            "必須セクションが欠けています: " + ", ".join(missing)
+            + "\n実際の見出し: " + ", ".join(found)
+        )
 
     if len(body) < 800:
         raise RuntimeError(f"本文が短すぎます（{len(body)}文字）。生成に失敗した可能性があります。")
