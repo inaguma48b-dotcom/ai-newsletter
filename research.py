@@ -32,6 +32,17 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 JST = datetime.timezone(datetime.timedelta(hours=9))
 API_TIMEOUT_MS = 180_000  # 無人実行で無限に待たないよう上限を設ける
 
+# 無料枠は混雑時に 503 UNAVAILABLE("high demand") を返す。同じモデルで粘っても
+# 抜けられないことがあるため、混雑に強い順に切り替えながら試す。
+# lite系は需要が分散していて通りやすく、混雑時の逃げ道になる。
+FALLBACK_MODELS = [
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+]
+MAX_ROUNDS = 4          # 全モデルを一巡して全滅した場合に、何巡まで粘るか
+ROUND_WAIT_SECONDS = 90  # 一巡全滅したあとの待ち時間（巡回ごとに増やす）
+
 DAYS = 7            # 何日前までのニュースを対象にするか
 MAX_ARTICLES = 70   # プロンプトに載せる記事数の上限
 MIN_ARTICLES = 15   # これを下回ったら収集失敗とみなす
@@ -278,6 +289,23 @@ def build_prompt(articles: list, today: datetime.date) -> str:
 - `<newsletter>` タグの外に説明や感想を書かない"""
 
 
+def is_retryable(e: Exception) -> bool:
+    """待てば直る類のエラーか判定する。
+
+    503(混雑) / 429(レート制限) / 500・502・504(一時障害) は待つ価値がある。
+    404(モデル提供終了) や 400・403(リクエスト・キーの誤り)は粘っても直らないので、
+    無駄に待たずに即座に落として原因を見せる。
+    """
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    if code is None:
+        m = re.match(r"\s*(\d{3})\b", str(e))
+        code = int(m.group(1)) if m else None
+    if code is not None:
+        return code in (429, 500, 502, 503, 504)
+    # コードが読み取れない場合（ネットワーク断・タイムアウト等）は再試行する
+    return True
+
+
 def generate(prompt: str) -> str:
     from google import genai
     from google.genai import types
@@ -291,31 +319,45 @@ def generate(prompt: str) -> str:
         max_output_tokens=16000,
     )
 
+    # 指定モデルを先頭に、重複を除いた試行順を作る
+    candidates = [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]
+
     last_error = None
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model=MODEL, contents=prompt, config=config
-            )
-        except Exception as e:  # レート制限・一時的な障害
-            last_error = e
-            wait = 20 * (attempt + 1)
-            print(f"  ! API呼び出し失敗（{type(e).__name__}）。{wait}秒後に再試行します")
+    for round_no in range(1, MAX_ROUNDS + 1):
+        for model in candidates:
+            try:
+                response = client.models.generate_content(
+                    model=model, contents=prompt, config=config
+                )
+            except Exception as e:
+                last_error = e
+                if not is_retryable(e):
+                    # モデル名の誤り・キー不正など。粘っても直らないので即座に止める
+                    raise RuntimeError(f"Gemini APIの呼び出しに失敗しました: {e}") from e
+                print(f"  ! {model} が混雑/一時障害（{type(e).__name__}）。次のモデルを試します")
+                continue
+
+            text = response.text
+            if text:
+                if model != MODEL:
+                    print(f"  → {model} で生成しました（既定モデルが混雑していたため）")
+                return text
+
+            reason = None
+            if getattr(response, "candidates", None):
+                reason = getattr(response.candidates[0], "finish_reason", None)
+            last_error = RuntimeError(f"空のレスポンス (finish_reason={reason})")
+            print(f"  ! {model}: {last_error}")
+
+        if round_no < MAX_ROUNDS:
+            wait = ROUND_WAIT_SECONDS * round_no
+            print(f"  ! 全モデルが応答せず。{wait}秒待って再試行します（{round_no}/{MAX_ROUNDS - 1}）")
             time.sleep(wait)
-            continue
 
-        text = response.text
-        if text:
-            return text
-
-        reason = None
-        if getattr(response, "candidates", None):
-            reason = getattr(response.candidates[0], "finish_reason", None)
-        last_error = RuntimeError(f"空のレスポンス (finish_reason={reason})")
-        print(f"  ! {last_error}。再試行します")
-        time.sleep(10)
-
-    raise RuntimeError(f"Gemini APIの呼び出しに3回失敗しました: {last_error}")
+    raise RuntimeError(
+        f"Gemini APIが{MAX_ROUNDS}巡とも応答しませんでした（試行モデル: {', '.join(candidates)}）。"
+        f"最後のエラー: {last_error}"
+    )
 
 
 # ---------------------------------------------------------------
