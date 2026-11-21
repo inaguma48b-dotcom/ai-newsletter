@@ -306,6 +306,30 @@ def is_retryable(e: Exception) -> bool:
     return True
 
 
+def is_not_found(e: Exception) -> bool:
+    code = getattr(e, "code", None) or getattr(e, "status_code", None)
+    if code is None:
+        m = re.match(r"\s*(\d{3})", str(e))
+        code = int(m.group(1)) if m else None
+    return code == 404
+
+
+def discover_models(client, exclude: set) -> list:
+    """generateContent対応のFlash系モデルを一覧から拾う(新しい順に近い名前順)。"""
+    try:
+        names = []
+        for m in client.models.list():
+            n = (m.name or "").replace("models/", "")
+            actions = getattr(m, "supported_actions", None) or []
+            if "flash" in n and "generateContent" in actions and n not in exclude:
+                if not any(x in n for x in ("image", "tts", "live", "audio", "embedding")):
+                    names.append(n)
+        return sorted(names, reverse=True)[:4]
+    except Exception as e:
+        print(f"  ! モデル一覧の取得に失敗: {e}")
+        return []
+
+
 def generate(prompt: str) -> str:
     from google import genai
     from google.genai import types
@@ -323,16 +347,24 @@ def generate(prompt: str) -> str:
     candidates = [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]
 
     last_error = None
+    dead = set()  # 404(提供終了・名前の誤り)だったモデル。以降の巡回では飛ばす
     for round_no in range(1, MAX_ROUNDS + 1):
         for model in candidates:
+            if model in dead:
+                continue
             try:
                 response = client.models.generate_content(
                     model=model, contents=prompt, config=config
                 )
             except Exception as e:
                 last_error = e
+                if is_not_found(e):
+                    # このモデルだけが使えない。他のモデルを試す
+                    print(f"  ! {model} は利用不可（404）。次のモデルを試します")
+                    dead.add(model)
+                    continue
                 if not is_retryable(e):
-                    # モデル名の誤り・キー不正など。粘っても直らないので即座に止める
+                    # キー不正・リクエスト不正など。粘っても直らないので即座に止める
                     raise RuntimeError(f"Gemini APIの呼び出しに失敗しました: {e}") from e
                 print(f"  ! {model} が混雑/一時障害（{type(e).__name__}）。次のモデルを試します")
                 continue
@@ -348,6 +380,15 @@ def generate(prompt: str) -> str:
                 reason = getattr(response.candidates[0], "finish_reason", None)
             last_error = RuntimeError(f"空のレスポンス (finish_reason={reason})")
             print(f"  ! {model}: {last_error}")
+
+        if all(m in dead for m in candidates):
+            # 候補が全滅(404)。モデル一覧からFlash系を探して追加で試す
+            extra = discover_models(client, exclude=set(candidates))
+            if not extra:
+                break
+            print(f"  ! 候補が全て404。一覧から追加候補を試します: {', '.join(extra)}")
+            candidates = candidates + extra
+            continue
 
         if round_no < MAX_ROUNDS:
             wait = ROUND_WAIT_SECONDS * round_no
